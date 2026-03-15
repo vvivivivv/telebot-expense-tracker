@@ -68,7 +68,7 @@ GOOGLE_CREDENTIALS=credentials.json
 ```
 expense_bot/
 ├── bot.py           # Main bot logic + command handlers
-├── database.py      # SQLite layer
+├── db.py      # SQLite layer
 ├── sheets.py        # Google Sheets sync
 ├── requirements.txt
 ├── .env

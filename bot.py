@@ -48,15 +48,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not check_user(update):
         return
     await update.message.reply_text(
-        "👋 *Expense Tracker Bot*\n\n"
+        "*Expense Tracker Bot*\n\n"
         "Commands:\n\n"
-        "➕ `/add <category> <amount> [note]` — Log an expense\n"
-        "📋 `/categories` — Show all categories\n"
-        "✏️ `/edit` — Edit a recent entry\n"
-        "📊 `/summary` — This month's breakdown\n"
-        "📜 `/history [n]` — Last n expenses (default 10)\n"
-        "🗑️ `/delete <id>` — Remove an entry by ID\n"
-        "❓ `/help` — Show this message\n\n"
+        "`/add <category> <amount> [note]` — Log an expense\n"
+        "`/categories` — Show all categories\n"
+        "`/edit` — Edit a recent entry\n"
+        "`/summary` — This month's breakdown\n"
+        "`/history [n]` — Last n expenses (default 10)\n"
+        "`/delete <id>` — Remove an entry by ID\n"
+        "`/help` — Show this message\n\n"
         "All expenses are synced to Google Sheets automatically",
         parse_mode="Markdown"
     )
