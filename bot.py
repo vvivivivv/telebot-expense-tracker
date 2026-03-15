@@ -17,7 +17,7 @@ logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logger = logging.getLogger(__name__)
 
 AWAITING_AMOUNT, AWAITING_NOTE = range(2)
-EDIT_AWAITING_AMOUNT, EDIT_AWAITING_NOTE = range(2, 4)
+EDIT_AWAITING_AMOUNT, EDIT_AWAITING_NOTE, EDIT_AWAITING_DATE = range(2, 5)
 
 BOT_TOKEN       = os.environ["BOT_TOKEN"]
 ALLOWED_USER_ID = int(os.environ.get("ALLOWED_USER_ID", "0"))
@@ -207,6 +207,7 @@ async def edit_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["editing_note"]   = note
 
     keyboard = [
+        [InlineKeyboardButton("Change date",        callback_data="editfield:date")],
         [InlineKeyboardButton("Change amount",      callback_data="editfield:amount")],
         [InlineKeyboardButton("Change note",        callback_data="editfield:note")],
         [InlineKeyboardButton("Change category",    callback_data="editfield:category")],
@@ -260,6 +261,14 @@ async def edit_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
         return EDIT_AWAITING_NOTE
+    
+    elif field == "date":
+        await query.edit_message_text(
+            f"*Current date:* {context.user_data.get('editing_ts', '—')}\n\n"
+            "Send the new date in format `DD-MM-YYYY` (e.g. `14-03-2026`):",
+            parse_mode="Markdown"
+        )
+        return EDIT_AWAITING_DATE
 
 
 async def edit_category_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -312,6 +321,30 @@ async def edit_receive_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"*Note updated!*\n\n"
         f"Entry `#{eid}` → 📝 {new_note or '—'}",
+        parse_mode="Markdown"
+    )
+    context.user_data.pop("editing_id",    None)
+    context.user_data.pop("editing_field", None)
+    return ConversationHandler.END
+
+
+async def edit_receive_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    try:
+        new_dt = datetime.strptime(text, "%d-%m-%Y")
+        new_ts = new_dt.strftime("%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        await update.message.reply_text(
+            "Please use format `DD-MM-YYYY` (e.g. `14-03-2026`).",
+            parse_mode="Markdown"
+        )
+        return EDIT_AWAITING_DATE
+
+    eid = context.user_data.get("editing_id")
+    db.update_expense(eid, created_at=new_ts)
+
+    await update.message.reply_text(
+        f"*Date updated!*\n\nEntry `#{eid}` → {new_dt.strftime('%d %b %Y')}",
         parse_mode="Markdown"
     )
     context.user_data.pop("editing_id",    None)
@@ -408,6 +441,7 @@ def main():
         states={
             EDIT_AWAITING_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_receive_amount)],
             EDIT_AWAITING_NOTE:   [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_receive_note)],
+            EDIT_AWAITING_DATE:   [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_receive_date)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )

@@ -53,7 +53,8 @@ class Database:
         expense_id: int,
         category: str = None,
         amount: float = None,
-        note: str = None
+        note: str = None,
+        created_at: str = None
     ) -> bool:
         fields, values = [], []
         if category is not None:
@@ -65,6 +66,9 @@ class Database:
         if note is not None:
             fields.append("note = ?")
             values.append(note)
+        if created_at is not None:
+            fields.append("created_at = ?")
+            values.append(created_at)
         if not fields:
             return False
         values.append(expense_id)
