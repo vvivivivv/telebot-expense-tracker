@@ -201,10 +201,11 @@ async def edit_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("Entry not found.")
         return
 
-    _, cat, amount, note, _ = row
+    _, cat, amount, note, ts = row
     context.user_data["editing_cat"]    = cat
     context.user_data["editing_amount"] = amount
     context.user_data["editing_note"]   = note
+    context.user_data["editing_ts"]     = ts
 
     keyboard = [
         [InlineKeyboardButton("Change date",        callback_data="editfield:date")],
@@ -437,13 +438,20 @@ def main():
     )
 
     edit_conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("edit", edit)],
+        entry_points=[CommandHandler("edit", edit),
+        CallbackQueryHandler(edit_pick, pattern=r"^editpick:"),],
         states={
             EDIT_AWAITING_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_receive_amount)],
             EDIT_AWAITING_NOTE:   [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_receive_note)],
             EDIT_AWAITING_DATE:   [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_receive_date)],
+            ConversationHandler.WAITING: [
+                CallbackQueryHandler(edit_pick,             pattern=r"^editpick:"),
+                CallbackQueryHandler(edit_field,            pattern=r"^editfield:"),
+                CallbackQueryHandler(edit_category_selected,pattern=r"^editcat:"),
+            ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
+        per_message=False,
     )
 
     application.add_handler(CommandHandler("start",      start))
@@ -455,10 +463,6 @@ def main():
     application.add_handler(CommandHandler("help",       help_cmd))
     application.add_handler(cat_conv_handler)
     application.add_handler(edit_conv_handler)
-
-    application.add_handler(CallbackQueryHandler(edit_pick,              pattern=r"^editpick:"))
-    application.add_handler(CallbackQueryHandler(edit_field,             pattern=r"^editfield:"))
-    application.add_handler(CallbackQueryHandler(edit_category_selected, pattern=r"^editcat:"))
 
     application.run_webhook(
         listen="0.0.0.0",
