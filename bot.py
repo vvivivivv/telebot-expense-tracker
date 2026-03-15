@@ -394,7 +394,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await start(update, context)
 
 
-async def main():
+def main():
     application = Application.builder().token(BOT_TOKEN).build()
 
     cat_conv_handler = ConversationHandler(
@@ -426,7 +426,7 @@ async def main():
     application.add_handler(CallbackQueryHandler(edit_field,             pattern=r"^editfield:"))
     application.add_handler(CallbackQueryHandler(edit_category_selected, pattern=r"^editcat:"))
 
-    await application.run_webhook(
+    application.run_webhook(
         listen="0.0.0.0",
         port=PORT,
         url_path=BOT_TOKEN,
@@ -434,7 +434,4 @@ async def main():
     )
 
 if __name__ == "__main__":
-    import asyncio
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(main())
+    main()
