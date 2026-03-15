@@ -6,12 +6,11 @@ Setup:
 2. Create a project → Enable "Google Sheets API" + "Google Drive API"
 3. Create a Service Account → download credentials JSON → save as credentials.json
 4. Share your Google Sheet with the service account email (Editor access)
-5. Set SPREADSHEET_ID in .env or below
+5. Set SPREADSHEET_ID in .env
 """
 
 import logging
 from datetime import datetime
-from typing import Optional
 import os
 
 logger = logging.getLogger(__name__)
@@ -78,6 +77,40 @@ class SheetsClient:
             logger.info(f"Synced expense #{expense_id} to Sheets.")
         except Exception as e:
             logger.error(f"Sheets append failed: {e}")
+
+    def update_expense_field(
+        self,
+        expense_id: int,
+        category:   str   = None,
+        amount:     float = None,
+        note:       str   = None,
+        created_at: str   = None,
+    ):
+    
+        if not self._sheet:
+            return
+        try:
+            import gspread
+            cell = self._sheet.find(str(expense_id), in_column=1)
+            if not cell:
+                logger.warning(f"Expense #{expense_id} not found in Sheets.")
+                return
+            row = cell.row
+
+            if created_at is not None:
+                new_dt = datetime.strptime(created_at, "%Y-%m-%d %H:%M:%S")
+                self._sheet.update_cell(row, 2, new_dt.strftime("%Y-%m-%d %H:%M"))
+                self._sheet.update_cell(row, 6, new_dt.strftime("%B %Y"))
+            if category is not None:
+                self._sheet.update_cell(row, 3, category)
+            if amount is not None:
+                self._sheet.update_cell(row, 4, round(amount, 2))
+            if note is not None:
+                self._sheet.update_cell(row, 5, note)
+
+            logger.info(f"Updated expense #{expense_id} in Sheets.")
+        except Exception as e:
+            logger.error(f"Sheets update failed: {e}")
 
     @property
     def connected(self) -> bool:

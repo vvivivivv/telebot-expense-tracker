@@ -278,11 +278,13 @@ async def edit_category_selected(update: Update, context: ContextTypes.DEFAULT_T
     eid = context.user_data.get("editing_id")
 
     db.update_expense(eid, category=new_cat)
+    sheets.update_expense_field(eid, category=new_cat)
+
     context.user_data.pop("editing_field", None)
     context.user_data.pop("editing_id",    None)
 
     await query.edit_message_text(
-        f"*Category updated!*\n\nEntry `#{eid}` → {new_cat}",
+        f"*Category updated!*\n\nEntry `#{eid}` → {new_cat}\nSynced to Google Sheets",
         parse_mode="Markdown"
     )
 
@@ -302,16 +304,18 @@ async def handle_edit_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Please enter a valid number (e.g. `6.50`).", parse_mode="Markdown")
             return
         db.update_expense(eid, amount=new_amount)
+        sheets.update_expense_field(eid, amount=new_amount)
         await update.message.reply_text(
-            f"*Amount updated!*\n\nEntry `#{eid}` → ${new_amount:.2f}",
+            f"*Amount updated!*\n\nEntry `#{eid}` → ${new_amount:.2f}\nSynced to Google Sheets",
             parse_mode="Markdown"
         )
 
     elif field == "note":
         new_note = "" if text == "-" else text
         db.update_expense(eid, note=new_note)
+        sheets.update_expense_field(eid, note=new_note)
         await update.message.reply_text(
-            f"*Note updated!*\n\nEntry `#{eid}` → {new_note or '—'}",
+            f"*Note updated!*\n\nEntry `#{eid}` → {new_note or '—'}\nSynced to Google Sheets",
             parse_mode="Markdown"
         )
 
@@ -321,13 +325,14 @@ async def handle_edit_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             new_ts = new_dt.strftime("%Y-%m-%d %H:%M:%S")
         except ValueError:
             await update.message.reply_text(
-                "Please use format `DD-MM-YYYY`.",
+                "Please use format `DD-MM-YYYY` (e.g. `14-03-2026`).",
                 parse_mode="Markdown"
             )
             return
         db.update_expense(eid, created_at=new_ts)
+        sheets.update_expense_field(eid, created_at=new_ts)
         await update.message.reply_text(
-            f"*Date updated!*\n\nEntry `#{eid}` → {new_dt.strftime('%d %b %Y')}",
+            f"*Date updated!*\n\nEntry `#{eid}` → {new_dt.strftime('%d %b %Y')}\nSynced to Google Sheets",
             parse_mode="Markdown"
         )
 
