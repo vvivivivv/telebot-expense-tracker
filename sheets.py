@@ -125,6 +125,43 @@ class SheetsClient:
         except Exception as e:
             logger.error(f"Sheets delete failed: {e}")
 
+    def write_summary(self, year: int, month: int, data: list, total: float):
+        if not self._sheet:
+            return
+        try:
+            import gspread
+            from calendar import month_abbr
+            tab_name = f"Summary {month_abbr[month]} {year}"
+            spreadsheet = self._sheet.spreadsheet
+
+            # Get or create the summary tab
+            try:
+                summary_sheet = spreadsheet.worksheet(tab_name)
+                summary_sheet.clear()
+            except gspread.WorksheetNotFound:
+                summary_sheet = spreadsheet.add_worksheet(tab_name, rows=50, cols=3)
+
+            summary_sheet.update("A1:C1", [["Category", "Amount", "% of Total"]])
+            summary_sheet.format("A1:C1", {
+                "textFormat": {"bold": True},
+                "backgroundColor": {"red": 0.2, "green": 0.6, "blue": 0.2},
+            })
+
+            rows = []
+            for category, amount in sorted(data, key=lambda x: x[1], reverse=True):
+                pct = round((amount / total * 100), 1) if total else 0
+                rows.append([category, round(amount, 2), f"{pct}%"])
+
+            rows.append(["", "", ""])
+            rows.append(["TOTAL", round(total, 2), "100%"])
+
+            if rows:
+                summary_sheet.update(f"A2:C{len(rows)+1}", rows)
+
+            logger.info(f"Written summary for {tab_name} to Sheets.")
+        except Exception as e:
+            logger.error(f"Sheets write_summary failed: {e}")
+
     @property
     def connected(self) -> bool:
         return self._sheet is not None

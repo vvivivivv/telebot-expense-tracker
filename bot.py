@@ -361,7 +361,9 @@ async def summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines.append(f"\n*Total: ${total:.2f}*")
     top = data[0][0] if data else "—"
     lines.append(f"Biggest category: {top}")
-
+    lines.append(f"\nSummary written to Google Sheets tab: *Summary {now.strftime('%b %Y')}*")
+    sheets.write_summary(now.year, now.month, data, total)
+    
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
