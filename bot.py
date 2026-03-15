@@ -1,5 +1,5 @@
 """
-Requirements: pip install python-telegram-bot gspread google-auth
+Requirements: pip install "python-telegram-bot[webhooks]" gspread google-auth
 """
 
 import logging
@@ -16,13 +16,13 @@ from sheets import SheetsClient
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-AWAITING_AMOUNT, AWAITING_NOTE = range(2)
-EDIT_AWAITING_AMOUNT, EDIT_AWAITING_NOTE, EDIT_AWAITING_DATE = range(2, 5)
+# Conversation state (only for /categories flow)
+AWAITING_AMOUNT = 0
 
 BOT_TOKEN       = os.environ["BOT_TOKEN"]
 ALLOWED_USER_ID = int(os.environ.get("ALLOWED_USER_ID", "0"))
 WEBHOOK_URL     = os.environ["WEBHOOK_URL"]
-PORT            = int(os.environ.get("PORT", "8443"))
+PORT            = int(os.environ.get("PORT", "10000"))
 
 db     = Database()
 sheets = SheetsClient()
@@ -56,6 +56,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await start(update, context)
+
 
 async def add_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not check_user(update):
@@ -75,7 +78,7 @@ async def add_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
         (c for c in CATEGORIES if category_input.lower() in c.lower()), None
     )
     if not matched_category:
-        matched_category = f"📦 {category_input}"
+        matched_category = category_input
 
     try:
         amount = float(args[1])
@@ -87,8 +90,10 @@ async def add_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
     expense_id = db.add_expense(matched_category, amount, note)
     sheets.append_expense(expense_id, matched_category, amount, note)
 
+    now_str = datetime.now().strftime("%d %b %Y")
     await update.message.reply_text(
         f"*Logged!*\n\n"
+        f"Date: {now_str}\n"
         f"Category: {matched_category}\n"
         f"Amount: ${amount:.2f}\n"
         f"Note: {note or '—'}\n"
@@ -118,7 +123,6 @@ async def show_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-
 async def category_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -129,7 +133,6 @@ async def category_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
     return AWAITING_AMOUNT
-
 
 async def receive_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not check_user(update):
@@ -147,8 +150,10 @@ async def receive_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     expense_id = db.add_expense(category, amount, note)
     sheets.append_expense(expense_id, category, amount, note)
 
+    now_str = datetime.now().strftime("%d %b %Y")
     await update.message.reply_text(
         f"*Logged!*\n\n"
+        f"Date: {now_str}\n"
         f"Category: {category}\n"
         f"Amount: ${amount:.2f}\n"
         f"Note: {note or '—'}\n"
@@ -158,8 +163,8 @@ async def receive_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return ConversationHandler.END
 
-
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
     await update.message.reply_text("Cancelled.")
     return ConversationHandler.END
 
@@ -187,13 +192,10 @@ async def edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-
 async def edit_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """User picked an entry — show which field to change."""
     query = update.callback_query
     await query.answer()
     eid = int(query.data.replace("editpick:", ""))
-    context.user_data["editing_id"] = eid
 
     expenses = db.get_recent(50)
     row = next((e for e in expenses if e[0] == eid), None)
@@ -202,19 +204,21 @@ async def edit_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     _, cat, amount, note, ts = row
+    context.user_data["editing_id"]     = eid
     context.user_data["editing_cat"]    = cat
     context.user_data["editing_amount"] = amount
     context.user_data["editing_note"]   = note
     context.user_data["editing_ts"]     = ts
 
     keyboard = [
-        [InlineKeyboardButton("Change date",        callback_data="editfield:date")],
-        [InlineKeyboardButton("Change amount",      callback_data="editfield:amount")],
-        [InlineKeyboardButton("Change note",        callback_data="editfield:note")],
-        [InlineKeyboardButton("Change category",    callback_data="editfield:category")],
+        [InlineKeyboardButton("Change date",     callback_data="editfield:date")],
+        [InlineKeyboardButton("Change amount",   callback_data="editfield:amount")],
+        [InlineKeyboardButton("Change note",     callback_data="editfield:note")],
+        [InlineKeyboardButton("Change category", callback_data="editfield:category")],
     ]
     await query.edit_message_text(
         f"*Editing entry `#{eid}`*\n\n"
+        f"Date: {datetime.fromisoformat(ts).strftime('%d %b %Y')}\n"
         f"Category: {cat}\n"
         f"Amount: ${amount:.2f}\n"
         f"Note: {note or '—'}\n\n"
@@ -222,7 +226,6 @@ async def edit_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
-
 
 async def edit_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -241,36 +244,32 @@ async def edit_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if row:
             keyboard.append(row)
         await query.edit_message_text(
-            "📁 *Pick the new category:*",
+            "*Pick the new category:*",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
-        return
 
     elif field == "amount":
         await query.edit_message_text(
-            f"💰 *Current amount:* ${context.user_data['editing_amount']:.2f}\n\n"
+            f"*Current amount:* ${context.user_data['editing_amount']:.2f}\n\n"
             "Send the new amount:",
             parse_mode="Markdown"
         )
-        return EDIT_AWAITING_AMOUNT
 
     elif field == "note":
         await query.edit_message_text(
             f"*Current note:* {context.user_data['editing_note'] or '—'}\n\n"
-            "Send the new note (or send `-` to clear it):",
+            "Send the new note (or `-` to clear it):",
             parse_mode="Markdown"
         )
-        return EDIT_AWAITING_NOTE
-    
+
     elif field == "date":
+        current = datetime.fromisoformat(context.user_data["editing_ts"]).strftime("%d %b %Y")
         await query.edit_message_text(
-            f"*Current date:* {context.user_data.get('editing_ts', '—')}\n\n"
+            f"*Current date:* {current}\n\n"
             "Send the new date in format `DD-MM-YYYY` (e.g. `14-03-2026`):",
             parse_mode="Markdown"
         )
-        return EDIT_AWAITING_DATE
-
 
 async def edit_category_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -279,78 +278,61 @@ async def edit_category_selected(update: Update, context: ContextTypes.DEFAULT_T
     eid = context.user_data.get("editing_id")
 
     db.update_expense(eid, category=new_cat)
+    context.user_data.pop("editing_field", None)
+    context.user_data.pop("editing_id",    None)
 
     await query.edit_message_text(
-        f"*Category updated!*\n\n"
-        f"Entry `#{eid}` → 📁 {new_cat}",
+        f"*Category updated!*\n\nEntry `#{eid}` → {new_cat}",
         parse_mode="Markdown"
     )
-    context.user_data.pop("editing_id",    None)
-    context.user_data.pop("editing_field", None)
-    return ConversationHandler.END
 
+async def handle_edit_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles free-text replies for editing amount, note, or date."""
+    field = context.user_data.get("editing_field")
+    eid   = context.user_data.get("editing_id")
+    if not field or not eid:
+        return
 
-async def edit_receive_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    parts = update.message.text.strip().split(maxsplit=1)
-    try:
-        new_amount = float(parts[0])
-    except ValueError:
-        await update.message.reply_text("Please enter a valid number.", parse_mode="Markdown")
-        return EDIT_AWAITING_AMOUNT
-
-    eid = context.user_data.get("editing_id")
-    db.update_expense(eid, amount=new_amount)
-
-    await update.message.reply_text(
-        f"*Amount updated!*\n\n"
-        f"Entry `#{eid}` → 💰 ${new_amount:.2f}",
-        parse_mode="Markdown"
-    )
-    context.user_data.pop("editing_id",    None)
-    context.user_data.pop("editing_field", None)
-    return ConversationHandler.END
-
-
-async def edit_receive_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    new_note = update.message.text.strip()
-    if new_note == "-":
-        new_note = ""
-
-    eid = context.user_data.get("editing_id")
-    db.update_expense(eid, note=new_note)
-
-    await update.message.reply_text(
-        f"*Note updated!*\n\n"
-        f"Entry `#{eid}` → 📝 {new_note or '—'}",
-        parse_mode="Markdown"
-    )
-    context.user_data.pop("editing_id",    None)
-    context.user_data.pop("editing_field", None)
-    return ConversationHandler.END
-
-
-async def edit_receive_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
-    try:
-        new_dt = datetime.strptime(text, "%d-%m-%Y")
-        new_ts = new_dt.strftime("%Y-%m-%d %H:%M:%S")
-    except ValueError:
+
+    if field == "amount":
+        try:
+            new_amount = float(text)
+        except ValueError:
+            await update.message.reply_text("Please enter a valid number (e.g. `6.50`).", parse_mode="Markdown")
+            return
+        db.update_expense(eid, amount=new_amount)
         await update.message.reply_text(
-            "Please use format `DD-MM-YYYY` (e.g. `14-03-2026`).",
+            f"*Amount updated!*\n\nEntry `#{eid}` → ${new_amount:.2f}",
             parse_mode="Markdown"
         )
-        return EDIT_AWAITING_DATE
 
-    eid = context.user_data.get("editing_id")
-    db.update_expense(eid, created_at=new_ts)
+    elif field == "note":
+        new_note = "" if text == "-" else text
+        db.update_expense(eid, note=new_note)
+        await update.message.reply_text(
+            f"*Note updated!*\n\nEntry `#{eid}` → {new_note or '—'}",
+            parse_mode="Markdown"
+        )
 
-    await update.message.reply_text(
-        f"*Date updated!*\n\nEntry `#{eid}` → {new_dt.strftime('%d %b %Y')}",
-        parse_mode="Markdown"
-    )
-    context.user_data.pop("editing_id",    None)
+    elif field == "date":
+        try:
+            new_dt = datetime.strptime(text, "%d-%m-%Y")
+            new_ts = new_dt.strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            await update.message.reply_text(
+                "Please use format `DD-MM-YYYY`.",
+                parse_mode="Markdown"
+            )
+            return
+        db.update_expense(eid, created_at=new_ts)
+        await update.message.reply_text(
+            f"*Date updated!*\n\nEntry `#{eid}` → {new_dt.strftime('%d %b %Y')}",
+            parse_mode="Markdown"
+        )
+
     context.user_data.pop("editing_field", None)
-    return ConversationHandler.END
+    context.user_data.pop("editing_id",    None)
 
 
 async def summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -424,10 +406,6 @@ async def delete_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Expense `#{eid}` not found.", parse_mode="Markdown")
 
 
-async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await start(update, context)
-
-
 def main():
     application = Application.builder().token(BOT_TOKEN).build()
 
@@ -437,32 +415,21 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
-    edit_conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("edit", edit),
-        CallbackQueryHandler(edit_pick, pattern=r"^editpick:"),],
-        states={
-            EDIT_AWAITING_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_receive_amount)],
-            EDIT_AWAITING_NOTE:   [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_receive_note)],
-            EDIT_AWAITING_DATE:   [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_receive_date)],
-            ConversationHandler.WAITING: [
-                CallbackQueryHandler(edit_pick,             pattern=r"^editpick:"),
-                CallbackQueryHandler(edit_field,            pattern=r"^editfield:"),
-                CallbackQueryHandler(edit_category_selected,pattern=r"^editcat:"),
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-        per_message=False,
-    )
-
     application.add_handler(CommandHandler("start",      start))
+    application.add_handler(CommandHandler("help",       help_cmd))
     application.add_handler(CommandHandler("add",        add_expense))
     application.add_handler(CommandHandler("categories", show_categories))
     application.add_handler(CommandHandler("summary",    summary))
     application.add_handler(CommandHandler("history",    history))
     application.add_handler(CommandHandler("delete",     delete_expense))
-    application.add_handler(CommandHandler("help",       help_cmd))
+    application.add_handler(CommandHandler("edit",       edit))
+    application.add_handler(CommandHandler("cancel",     cancel))
     application.add_handler(cat_conv_handler)
-    application.add_handler(edit_conv_handler)
+
+    application.add_handler(CallbackQueryHandler(edit_pick,              pattern=r"^editpick:"))
+    application.add_handler(CallbackQueryHandler(edit_field,             pattern=r"^editfield:"))
+    application.add_handler(CallbackQueryHandler(edit_category_selected, pattern=r"^editcat:"))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_text))
 
     application.run_webhook(
         listen="0.0.0.0",
