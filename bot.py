@@ -12,6 +12,9 @@ from telegram.ext import (
 )
 from db import Database
 from sheets import SheetsClient
+from zoneinfo import ZoneInfo
+
+SGT = ZoneInfo("Asia/Singapore")
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -175,7 +178,7 @@ async def edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = []
     for eid, cat, amount, note, ts in expenses:
-        date_str = datetime.fromisoformat(ts).strftime("%d %b")
+        date_str = datetime.fromisoformat(ts).replace(tzinfo=ZoneInfo("UTC")).astimezone(SGT).strftime("%d %b")
         label = f"#{eid} {cat} ${amount:.2f} {date_str}"
         if note:
             label += f" — {note[:15]}"
@@ -323,7 +326,7 @@ async def summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not check_user(update):
         return
 
-    now = datetime.now()
+    now = datetime.now(SGT)
     data = db.monthly_summary(now.year, now.month)
     total = sum(v for _, v in data)
 
@@ -363,7 +366,7 @@ async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines = [f"*Last {len(expenses)} expenses:*\n"]
     for row in expenses:
         eid, cat, amount, note, ts = row
-        date_str = datetime.fromisoformat(ts).strftime("%d %b %H:%M")
+        date_str = datetime.fromisoformat(ts).replace(tzinfo=ZoneInfo("UTC")).astimezone(SGT).strftime("%d %b %H:%M")
         lines.append(f"`#{eid}` {cat} — *${amount:.2f}* {note or ''}\n_{date_str}_\n")
 
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
