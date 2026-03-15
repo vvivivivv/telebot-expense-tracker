@@ -17,6 +17,9 @@ import logging
 from calendar import month_abbr
 from datetime import datetime
 import os
+from zoneinfo import ZoneInfo
+
+SGT = ZoneInfo("Asia/Singapore")
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +82,7 @@ class SheetsClient:
         if not self._spreadsheet:
             return
         try:
-            now = datetime.now()
+            now = datetime.now(SGT)
             sheet = self._get_or_create_expense_tab(now.year, now.month)
             row = [
                 expense_id,

@@ -12,6 +12,9 @@ from telegram.ext import (
 )
 from db import Database
 from sheets import SheetsClient
+from zoneinfo import ZoneInfo
+
+SGT = ZoneInfo("Asia/Singapore")
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -90,7 +93,7 @@ async def add_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
     expense_id = db.add_expense(matched_category, amount, note)
     sheets.append_expense(expense_id, matched_category, amount, note)
 
-    now_str = datetime.now().strftime("%d %b %Y")
+    now_str = datetime.now(SGT).strftime("%d %b %Y")
     await update.message.reply_text(
         f"*Logged!*\n\n"
         f"Date: {now_str}\n"
@@ -150,7 +153,7 @@ async def receive_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     expense_id = db.add_expense(category, amount, note)
     sheets.append_expense(expense_id, category, amount, note)
 
-    now_str = datetime.now().strftime("%d %b %Y")
+    now_str = datetime.now(SGT).strftime("%d %b %Y")
     await update.message.reply_text(
         f"*Logged!*\n\n"
         f"Date: {now_str}\n"
@@ -344,7 +347,7 @@ async def summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not check_user(update):
         return
 
-    now = datetime.now()
+    now = datetime.now(SGT)
     data = db.monthly_summary(now.year, now.month)
     total = sum(v for _, v in data)
 
@@ -363,7 +366,7 @@ async def summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines.append(f"Biggest category: {top}")
     lines.append(f"\nSummary written to Google Sheets tab: *Summary {now.strftime('%b %Y')}*")
     sheets.write_summary(now.year, now.month, data, total)
-    
+
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
