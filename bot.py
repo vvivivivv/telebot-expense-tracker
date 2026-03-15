@@ -1,11 +1,10 @@
 """
-Requirements: pip install python-telegram-bot gspread google-auth aiohttp
+Requirements: pip install python-telegram-bot gspread google-auth
 """
 
 import logging
 import os
 from datetime import datetime
-from aiohttp import web
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
@@ -29,8 +28,8 @@ db     = Database()
 sheets = SheetsClient()
 
 CATEGORIES = [
-    "🍔 Food", "🚗 Transport", "🏠 Housing", "💊 Health",
-    "🎬 Entertainment", "🛍️ Shopping", "📚 Education", "💼 Work", "🌐 Utilities", "📦 Other"
+    "Food", "Transport", "Housing", "Health",
+    "Entertainment", "Shopping", "Education", "Work", "Others"
 ]
 
 
@@ -38,10 +37,6 @@ def check_user(update: Update) -> bool:
     if ALLOWED_USER_ID and update.effective_user.id != ALLOWED_USER_ID:
         return False
     return True
-
-
-async def health(request):
-    return web.Response(text="Bot is running", status=200)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -431,15 +426,12 @@ async def main():
     application.add_handler(CallbackQueryHandler(edit_field,             pattern=r"^editfield:"))
     application.add_handler(CallbackQueryHandler(edit_category_selected, pattern=r"^editcat:"))
 
-    await application.initialize()
-    application.web_app.router.add_get("/", health)
     await application.run_webhook(
         listen="0.0.0.0",
         port=PORT,
         url_path=BOT_TOKEN,
         webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}"
     )
-
 
 if __name__ == "__main__":
     import asyncio
