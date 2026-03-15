@@ -25,7 +25,7 @@ class Database:
                     category  TEXT    NOT NULL,
                     amount    REAL    NOT NULL,
                     note      TEXT    DEFAULT '',
-                    created_at TEXT   DEFAULT (datetime('now', '+8 hours'))
+                    created_at TEXT   DEFAULT (datetime('now', 'localtime'))
                 )
             """)
             conn.commit()

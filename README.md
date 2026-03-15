@@ -24,8 +24,8 @@ A simple telegram bot to track expenses for personal use. Entries are logged to 
 
 ### 2. Find your Telegram User ID
 
-1. Get numeric user ID from @userinfobot on Telegram
-2. Set it as `ALLOWED_USER_ID`
+Open @userinfobot on Telegram — it tells you your numeric user ID.
+Set it as `ALLOWED_USER_ID` so only you can use the bot.
 
 ### 3. Set up Google Sheets sync
 
@@ -72,7 +72,7 @@ expense_bot/
 ├── sheets.py        # Google Sheets sync
 ├── requirements.txt
 ├── .env
-├── .gitignore
+└── .gitignore
 ├── credentials.json # (not committed to git)
 └── expenses.db      # (auto-created on first run)
 ```
