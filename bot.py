@@ -406,10 +406,13 @@ async def delete_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     success = db.delete_expense(eid)
     if success:
-        await update.message.reply_text(f"Expense `#{eid}` deleted.", parse_mode="Markdown")
+        sheets.delete_expense_row(eid)
+        await update.message.reply_text(
+            f"Expense `#{eid}` deleted.\nSynced to Google Sheets",
+            parse_mode="Markdown"
+        )
     else:
         await update.message.reply_text(f"Expense `#{eid}` not found.", parse_mode="Markdown")
-
 
 def main():
     application = Application.builder().token(BOT_TOKEN).build()

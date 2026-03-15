@@ -112,6 +112,19 @@ class SheetsClient:
         except Exception as e:
             logger.error(f"Sheets update failed: {e}")
 
+    def delete_expense_row(self, expense_id: int):
+        if not self._sheet:
+            return
+        try:
+            cell = self._sheet.find(str(expense_id), in_column=1)
+            if not cell:
+                logger.warning(f"Expense #{expense_id} not found in Sheets for deletion.")
+                return
+            self._sheet.delete_rows(cell.row)
+            logger.info(f"Deleted expense #{expense_id} from Sheets.")
+        except Exception as e:
+            logger.error(f"Sheets delete failed: {e}")
+
     @property
     def connected(self) -> bool:
         return self._sheet is not None
