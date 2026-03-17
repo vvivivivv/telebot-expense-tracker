@@ -73,10 +73,13 @@ class SheetsClient:
 
     def _find_row(self, sheet, expense_id: int):
         try:
-            cell = sheet.find(str(expense_id), in_column=1)
-            return cell.row if cell else None
-        except Exception:
-            return None
+            all_values = sheet.get_all_values()
+            for i, row in enumerate(all_values):
+                if row and str(row[0]).strip() == str(expense_id):
+                    return i + 1
+        except Exception as e:
+            logger.error(f"_find_row error: {e}")
+        return None
 
     def append_expense(self, expense_id: int, category: str, amount: float, note: str = ""):
         if not self._spreadsheet:
@@ -113,6 +116,8 @@ class SheetsClient:
             if not sheet or not row_num:
                 logger.warning(f"Expense #{expense_id} not found in any Sheets tab.")
                 return
+            
+            logger.info(f"Found expense #{expense_id} at row {row_num} in '{sheet.title}'.")
 
             if created_at is not None:
                 new_dt = datetime.strptime(created_at, "%Y-%m-%d %H:%M:%S")
