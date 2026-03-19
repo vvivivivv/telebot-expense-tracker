@@ -96,7 +96,9 @@ class SheetsClient:
                 now.strftime("%B %Y"),
             ]
             sheet.append_row(row, value_input_option="USER_ENTERED")
+            self._sort_expense_tab(sheet)
             logger.info(f"Synced expense #{expense_id} to Sheets.")
+        
         except Exception as e:
             logger.error(f"Sheets append failed: {e}")
 
@@ -116,13 +118,38 @@ class SheetsClient:
             if not sheet or not row_num:
                 logger.warning(f"Expense #{expense_id} not found in any Sheets tab.")
                 return
-            
+
             logger.info(f"Found expense #{expense_id} at row {row_num} in '{sheet.title}'.")
 
             if created_at is not None:
                 new_dt = datetime.strptime(created_at, "%Y-%m-%d %H:%M:%S")
-                sheet.update_cell(row_num, 2, new_dt.strftime("%Y-%m-%d %H:%M"))
-                sheet.update_cell(row_num, 6, new_dt.strftime("%B %Y"))
+                new_tab = self._expense_tab_name(new_dt.year, new_dt.month)
+                current_tab = sheet.title
+
+                if new_tab != current_tab:
+                    existing = self._get_full_row(sheet, row_num)
+                    sheet.delete_rows(row_num)
+                    logger.info(f"Moved expense #{expense_id} from '{current_tab}' to '{new_tab}'.")
+
+                    new_sheet = self._get_or_create_expense_tab(new_dt.year, new_dt.month)
+                    updated_row = [
+                        existing[0] if existing else expense_id,
+                        new_dt.strftime("%Y-%m-%d %H:%M"),
+                        category if category is not None else (existing[2] if len(existing) > 2 else ""),
+                        round(amount, 2) if amount is not None else (existing[3] if len(existing) > 3 else ""),
+                        note if note is not None else (existing[4] if len(existing) > 4 else ""),
+                        new_dt.strftime("%B %Y"),
+                    ]
+                    
+                    new_sheet.append_row(updated_row, value_input_option="USER_ENTERED")
+                    self._sort_expense_tab(new_sheet)
+                    logger.info(f"Re-inserted expense #{expense_id} into '{new_tab}'.")
+                    return
+
+                else:
+                    sheet.update_cell(row_num, 2, new_dt.strftime("%Y-%m-%d %H:%M"))
+                    sheet.update_cell(row_num, 6, new_dt.strftime("%B %Y"))
+
             if category is not None:
                 sheet.update_cell(row_num, 3, category)
             if amount is not None:
@@ -130,7 +157,9 @@ class SheetsClient:
             if note is not None:
                 sheet.update_cell(row_num, 5, note)
 
+            self._sort_expense_tab(sheet)
             logger.info(f"Updated expense #{expense_id} in Sheets.")
+        
         except Exception as e:
             logger.error(f"Sheets update failed: {e}")
 
@@ -193,6 +222,28 @@ class SheetsClient:
         except Exception as e:
             logger.error(f"Sheets search failed: {e}")
         return None, None
+
+    def _get_full_row(self, sheet, row_num: int) -> list:
+        try:
+            return sheet.row_values(row_num)
+        except Exception:
+            return []
+        
+    def _sort_expense_tab(self, sheet):
+        try:
+            all_values = sheet.get_all_values()
+            if len(all_values) <= 2:
+                return
+            header = all_values[0]
+            data_rows = all_values[1:]
+            data_rows.sort(key=lambda r: r[1] if len(r) > 1 else "")
+            last_row = len(all_values)
+            sheet.delete_rows(2, last_row)
+            if data_rows:
+                sheet.append_rows(data_rows, value_input_option="USER_ENTERED")
+            logger.info(f"Sorted tab '{sheet.title}' by date.")
+        except Exception as e:
+            logger.error(f"Sort failed: {e}")
 
     @property
     def connected(self) -> bool:

@@ -325,13 +325,22 @@ async def handle_edit_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif field == "date":
         try:
             new_dt = datetime.strptime(text, "%d-%m-%Y")
-            new_ts = new_dt.strftime("%Y-%m-%d %H:%M:%S")
+            original_ts = context.user_data.get("editing_ts", "")
+            try:
+                original_dt = datetime.fromisoformat(original_ts)
+                new_ts = new_dt.replace(
+                    hour=original_dt.hour,
+                    minute=original_dt.minute
+                ).strftime("%Y-%m-%d %H:%M:%S")
+            except Exception:
+                new_ts = new_dt.strftime("%Y-%m-%d %H:%M:%S")
         except ValueError:
             await update.message.reply_text(
-                "Please use format `DD-MM-YYYY` (e.g. `14-03-2026`).",
+                "Please use format `DD-MM-YYYY`",
                 parse_mode="Markdown"
             )
             return
+           
         db.update_expense(eid, created_at=new_ts)
         sheets.update_expense_field(eid, created_at=new_ts)
         await update.message.reply_text(

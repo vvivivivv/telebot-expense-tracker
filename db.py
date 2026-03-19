@@ -1,6 +1,6 @@
 import sqlite3
 from datetime import datetime
-from typing import List, Tuple, Optional
+from typing import List, Tuple
 
 DB_PATH = "expenses.db"
 
@@ -21,11 +21,11 @@ class Database:
         with self._conn() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS expenses (
-                    id        INTEGER PRIMARY KEY AUTOINCREMENT,
-                    category  TEXT    NOT NULL,
-                    amount    REAL    NOT NULL,
-                    note      TEXT    DEFAULT '',
-                    created_at TEXT   DEFAULT (datetime('now', '+8 hours'))
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    category   TEXT    NOT NULL,
+                    amount     REAL    NOT NULL,
+                    note       TEXT    DEFAULT '',
+                    created_at TEXT    DEFAULT (strftime('%Y-%m-%d %H:%M', datetime('now', '+8 hours')))
                 )
             """)
             conn.commit()
@@ -67,6 +67,11 @@ class Database:
             fields.append("note = ?")
             values.append(note)
         if created_at is not None:
+            try:
+                dt = datetime.strptime(created_at, "%Y-%m-%d %H:%M:%S")
+                created_at = dt.strftime("%Y-%m-%d %H:%M")
+            except ValueError:
+                pass
             fields.append("created_at = ?")
             values.append(created_at)
         if not fields:
