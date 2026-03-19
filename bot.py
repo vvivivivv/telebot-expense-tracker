@@ -27,7 +27,7 @@ ALLOWED_USER_ID = int(os.environ.get("ALLOWED_USER_ID", "0"))
 WEBHOOK_URL     = os.environ["WEBHOOK_URL"]
 PORT            = int(os.environ.get("PORT", "10000"))
 
-db     = Database()
+db = Database()
 sheets = SheetsClient()
 
 CATEGORIES = [
