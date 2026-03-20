@@ -11,7 +11,6 @@ from telegram.ext import (
     MessageHandler, filters, ContextTypes, ConversationHandler
 )
 from db import Database
-from sheets import SheetsClient
 from zoneinfo import ZoneInfo
 
 SGT = ZoneInfo("Asia/Singapore")
@@ -28,7 +27,6 @@ WEBHOOK_URL     = os.environ["WEBHOOK_URL"]
 PORT            = int(os.environ.get("PORT", "10000"))
 
 db = Database()
-sheets = SheetsClient()
 
 CATEGORIES = [
     "Food", "Transport", "Housing", "Health",
@@ -91,7 +89,6 @@ async def add_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     note = " ".join(args[2:]) if len(args) > 2 else ""
     expense_id = db.add_expense(matched_category, amount, note)
-    sheets.append_expense(expense_id, matched_category, amount, note)
 
     now_str = datetime.now(SGT).strftime("%d %b %Y")
     await update.message.reply_text(
@@ -281,7 +278,6 @@ async def edit_category_selected(update: Update, context: ContextTypes.DEFAULT_T
     eid = context.user_data.get("editing_id")
 
     db.update_expense(eid, category=new_cat)
-    sheets.update_expense_field(eid, category=new_cat)
 
     context.user_data.pop("editing_field", None)
     context.user_data.pop("editing_id",    None)
@@ -307,7 +303,6 @@ async def handle_edit_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Please enter a valid number (e.g. `6.50`).", parse_mode="Markdown")
             return
         db.update_expense(eid, amount=new_amount)
-        sheets.update_expense_field(eid, amount=new_amount)
         await update.message.reply_text(
             f"*Amount updated!*\n\nEntry `#{eid}` → ${new_amount:.2f}\nSynced to Google Sheets",
             parse_mode="Markdown"
@@ -316,7 +311,6 @@ async def handle_edit_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif field == "note":
         new_note = "" if text == "-" else text
         db.update_expense(eid, note=new_note)
-        sheets.update_expense_field(eid, note=new_note)
         await update.message.reply_text(
             f"*Note updated!*\n\nEntry `#{eid}` → {new_note or '—'}\nSynced to Google Sheets",
             parse_mode="Markdown"
@@ -342,7 +336,6 @@ async def handle_edit_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
            
         db.update_expense(eid, created_at=new_ts)
-        sheets.update_expense_field(eid, created_at=new_ts)
         await update.message.reply_text(
             f"*Date updated!*\n\nEntry `#{eid}` → {new_dt.strftime('%d %b %Y')}\nSynced to Google Sheets",
             parse_mode="Markdown"
@@ -374,8 +367,8 @@ async def summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     top = data[0][0] if data else "—"
     lines.append(f"Biggest category: {top}")
     lines.append(f"\nSummary written to Google Sheets tab: *Summary {now.strftime('%b %Y')}*")
-    sheets.write_summary(now.year, now.month, data, total)
-
+    db._sheets.write_summary(now.year, now.month, data, total)
+    
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
@@ -420,7 +413,6 @@ async def delete_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     success = db.delete_expense(eid)
     if success:
-        sheets.delete_expense_row(eid)
         await update.message.reply_text(
             f"Expense `#{eid}` deleted.\nSynced to Google Sheets",
             parse_mode="Markdown"
