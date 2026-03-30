@@ -18,8 +18,10 @@ SGT = ZoneInfo("Asia/Singapore")
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-AWAITING_AMOUNT = 0
-AWAITING_EDIT_TEXT = 1
+AWAITING_AMOUNT = 0   # /categories flow
+CHOOSING_ENTRY = 10  # /edit: list shown, waiting for row tap
+CHOOSING_FIELD = 11  # /edit: field menu shown, waiting for field tap
+AWAITING_EDIT_TEXT = 12 # /edit: waiting for new value text after field tap
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 ALLOWED_USER_ID = int(os.environ.get("ALLOWED_USER_ID", "0"))
@@ -33,11 +35,23 @@ CATEGORIES = [
     "Entertainment", "Shopping", "Education", "Work", "Others"
 ]
 
+FIELD_ALIASES = {"date": "date", "amount": "amount", "note": "note", "category": "category"}
+FIELD_DISPLAY = ["Date", "Amount", "Note", "Category"]
+
 
 def check_user(update: Update) -> bool:
     if ALLOWED_USER_ID and update.effective_user.id != ALLOWED_USER_ID:
         return False
     return True
+
+
+def _fmt_ts(ts: str) -> str:
+    for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(ts, fmt).strftime("%d %b %Y %H:%M")
+        except ValueError:
+            pass
+    return ts[:16]
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -47,8 +61,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "*Expense Tracker Bot*\n\n"
         "Commands:\n\n"
         "`/add <category> <amount> [note]` — Log an expense\n"
-        "`/categories` — Show all categories\n"
-        "`/edit` — Edit a recent entry\n"
+        "`/categories` — Pick category via buttons\n"
+        "`/edit` — Edit a recent entry interactively\n"
+        "`/edit <id> <field> <value>` — Edit inline\n"
+        "  Fields: `Date` · `Amount` · `Note` · `Category`\n"
         "`/summary` — This month's breakdown\n"
         "`/history [n]` — Last n expenses (default 10)\n"
         "`/delete <id>` — Remove an entry by ID\n"
@@ -64,32 +80,22 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def add_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not check_user(update):
         return
-
     args = context.args
     if len(args) < 2:
         await update.message.reply_text(
-            "Usage: `/add <category> <amount> [note]`\n"
-            "Or use /categories to pick via buttons.",
+            "Usage: `/add <category> <amount> [note]`\nOr use /categories to pick via buttons.",
             parse_mode="Markdown"
         )
         return
-
     category_input = args[0].capitalize()
-    matched_category = next(
-        (c for c in CATEGORIES if category_input.lower() in c.lower()), None
-    )
-    if not matched_category:
-        matched_category = category_input
-
+    matched_category = next((c for c in CATEGORIES if category_input.lower() in c.lower()), None) or category_input
     try:
         amount = float(args[1])
     except ValueError:
         await update.message.reply_text("Amount must be a number.", parse_mode="Markdown")
         return
-
     note = " ".join(args[2:]) if len(args) > 2 else ""
     expense_id = db.add_expense(matched_category, amount, note)
-
     if expense_id == -1:
         await update.message.reply_text(
             "Failed to log expense. Google Sheets may not be connected.\n"
@@ -100,13 +106,8 @@ async def add_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     now_str = datetime.now(SGT).strftime("%d %b %Y")
     await update.message.reply_text(
-        f"*Logged!*\n\n"
-        f"Date: {now_str}\n"
-        f"Category: {matched_category}\n"
-        f"Amount: ${amount:.2f}\n"
-        f"Note: {note or '—'}\n"
-        f"ID: `{expense_id}`\n"
-        f"Synced to Google Sheets",
+        f"*Logged!*\n\nDate: {now_str}\nCategory: {matched_category}\n"
+        f"Amount: ${amount:.2f}\nNote: {note or '—'}\nID: `{expense_id}`\nSynced to Google Sheets",
         parse_mode="Markdown"
     )
 
@@ -114,17 +115,13 @@ async def add_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not check_user(update):
         return
-
-    keyboard = []
-    row = []
-    for i, cat in enumerate(CATEGORIES):
+    keyboard, row = [], []
+    for cat in CATEGORIES:
         row.append(InlineKeyboardButton(cat, callback_data=f"cat:{cat}"))
         if len(row) == 2:
-            keyboard.append(row)
-            row = []
+            keyboard.append(row); row = []
     if row:
         keyboard.append(row)
-
     await update.message.reply_text(
         "*Choose a category to log an expense:*",
         reply_markup=InlineKeyboardMarkup(keyboard),
@@ -187,16 +184,38 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not check_user(update):
         return
+    args = context.args or []
+
+    if len(args) >= 3:
+        try:
+            eid = int(args[0])
+        except ValueError:
+            await update.message.reply_text("ID must be a number.", parse_mode="Markdown")
+            return
+        field = FIELD_ALIASES.get(args[1].lower())
+        if not field:
+            valid = " · ".join(f"`{f}`" for f in FIELD_DISPLAY)
+            await update.message.reply_text(
+                f"Unknown field `{args[1]}`.\nValid fields: {valid}", parse_mode="Markdown"
+            )
+            return
+        await _apply_inline_edit(update, eid, field, " ".join(args[2:]))
+        return
+
+    if len(args) > 0:
+        valid = " · ".join(f"`{f}`" for f in FIELD_DISPLAY)
+        await update.message.reply_text(
+            f"Usage: `/edit` or `/edit <id> <field> <value>`\nFields: {valid}",
+            parse_mode="Markdown"
+        )
+        return
 
     expenses = db.get_recent(5)
     if not expenses:
         await update.message.reply_text(
-            "No expenses found.\n\n"
-            "This could mean Google Sheets is not connected, or no expenses have been logged yet.\n"
-            "Try adding an entry to test.",
-            parse_mode="Markdown"
+            "No expenses found. Google Sheets may not be connected.", parse_mode="Markdown"
         )
-        return
+        return ConversationHandler.END
 
     keyboard = []
     for eid, cat, amount, note, ts in expenses:
@@ -214,48 +233,80 @@ async def edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
+    return CHOOSING_ENTRY
+
+
+async def _apply_inline_edit(update: Update, eid: int, field: str, value: str):
+    kwargs = {}
+    if field == "amount":
+        try:
+            kwargs["amount"] = float(value)
+        except ValueError:
+            await update.message.reply_text(f"`{value}` is not a valid amount.", parse_mode="Markdown")
+            return
+    elif field == "date":
+        try:
+            new_dt = datetime.strptime(value, "%d-%m-%Y")
+            kwargs["created_at"] = new_dt.strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            await update.message.reply_text(f"Use format `DD-MM-YYYY`.", parse_mode="Markdown")
+            return
+    elif field == "note":
+        kwargs["note"] = "" if value == "-" else value
+    elif field == "category":
+        matched = next((c for c in CATEGORIES if value.lower() in c.lower()), None)
+        kwargs["category"] = matched or value.capitalize()
+
+    success = db.update_expense(eid, **kwargs)
+    if field == "date":
+        display_val = datetime.strptime(value, "%d-%m-%Y").strftime("%d %b %Y")
+    elif field == "amount":
+        display_val = f"${kwargs['amount']:.2f}"
+    elif field == "note":
+        display_val = kwargs["note"] or "—"
+    else:
+        display_val = kwargs.get("category", value)
+
+    if success:
+        await update.message.reply_text(
+            f"*{field.capitalize()} updated!*\nEntry `#{eid}` → {display_val}\nSynced to Google Sheets",
+            parse_mode="Markdown"
+        )
+    else:
+        await update.message.reply_text(
+            f"Could not update `#{eid}`. Use `/history` to check IDs.", parse_mode="Markdown"
+        )
+
 
 async def edit_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     eid = int(query.data.replace("editpick:", ""))
-
     expenses = db.get_recent(50)
     row = next((e for e in expenses if e[0] == eid), None)
     if not row:
         await query.edit_message_text("Entry not found.")
-        return
-
+        return ConversationHandler.END
     _, cat, amount, note, ts = row
-    context.user_data["editing_id"] = eid
-    context.user_data["editing_cat"] = cat
-    context.user_data["editing_amount"] = amount
-    context.user_data["editing_note"] = note
-    context.user_data["editing_ts"] = ts
-
+    context.user_data.update({
+        "editing_id": eid, "editing_cat": cat,
+        "editing_amount": amount, "editing_note": note, "editing_ts": ts,
+    })
     keyboard = [
         [InlineKeyboardButton("Change date", callback_data="editfield:date")],
         [InlineKeyboardButton("Change amount", callback_data="editfield:amount")],
         [InlineKeyboardButton("Change note", callback_data="editfield:note")],
         [InlineKeyboardButton("Change category", callback_data="editfield:category")],
     ]
-
-    try:
-        date_str = datetime.strptime(ts, "%Y-%m-%d %H:%M").strftime("%d %b %Y")
-    except Exception:
-        date_str = ts[:10]
-
     await query.edit_message_text(
         f"*Editing entry `#{eid}`*\n\n"
-        f"Date: {date_str}\n"
-        f"Category: {cat}\n"
-        f"Amount: ${amount:.2f}\n"
-        f"Note: {note or '—'}\n\n"
+        f"Date: {_fmt_ts(ts)}\nCategory: {cat}\nAmount: ${amount:.2f}\nNote: {note or '—'}\n\n"
         f"What do you want to change?",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
-    return AWAITING_EDIT_TEXT
+    return CHOOSING_FIELD
+
 
 async def edit_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -266,7 +317,7 @@ async def edit_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if field == "category":
         keyboard = []
         row = []
-        for i, cat in enumerate(CATEGORIES):
+        for cat in CATEGORIES:
             row.append(InlineKeyboardButton(cat, callback_data=f"editcat:{cat}"))
             if len(row) == 2:
                 keyboard.append(row)
@@ -278,33 +329,19 @@ async def edit_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
-
     elif field == "amount":
         await query.edit_message_text(
-            f"*Current amount:* ${context.user_data['editing_amount']:.2f}\n\n"
-            "Send the new amount:",
-            parse_mode="Markdown"
-        )
-
+            f"*Current amount:* ${context.user_data['editing_amount']:.2f}\n\nSend the new amount:",
+            parse_mode="Markdown")
     elif field == "note":
         await query.edit_message_text(
-            f"*Current note:* {context.user_data['editing_note'] or '—'}\n\n"
-            "Send the new note (or `-` to clear it):",
-            parse_mode="Markdown"
-        )
-
+            f"*Current note:* {context.user_data['editing_note'] or '—'}\n\nSend the new note (or `-` to clear):",
+            parse_mode="Markdown")
     elif field == "date":
-        ts = context.user_data.get("editing_ts", "")
-        try:
-            current = datetime.strptime(ts, "%Y-%m-%d %H:%M").strftime("%d %b %Y")
-        except Exception:
-            current = ts[:10]
         await query.edit_message_text(
-            f"*Current date:* {current}\n\n"
-            "Send the new date in format `DD-MM-YYYY` (e.g. `14-03-2026`):",
-            parse_mode="Markdown"
-        )
-
+            f"*Current date:* {_fmt_ts(context.user_data.get('editing_ts', ''))}\n\n"
+            "Send new date as `DD-MM-YYYY`:",
+            parse_mode="Markdown")
     return AWAITING_EDIT_TEXT
 
 async def edit_category_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -314,19 +351,13 @@ async def edit_category_selected(update: Update, context: ContextTypes.DEFAULT_T
     eid = context.user_data.get("editing_id")
 
     success = db.update_expense(eid, category=new_cat)
-    context.user_data.pop("editing_field", None)
-    context.user_data.pop("editing_id", None)
-
+    context.user_data.clear()
     if success:
         await query.edit_message_text(
-            f"*Category updated!*\n\nEntry `#{eid}` → {new_cat}\nSynced to Google Sheets",
-            parse_mode="Markdown"
-        )
+            f"*Category updated!*\nEntry `#{eid}` → {new_cat}\nSynced to Google Sheets ✓",
+            parse_mode="Markdown")
     else:
-        await query.edit_message_text(
-            f"Failed to update entry `#{eid}`. It may no longer exist.",
-            parse_mode="Markdown"
-        )
+        await query.edit_message_text(f"Failed to update entry `#{eid}`.", parse_mode="Markdown")
     return ConversationHandler.END
 
 async def handle_edit_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -347,175 +378,121 @@ async def handle_edit_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return AWAITING_EDIT_TEXT
 
         success = db.update_expense(eid, amount=new_amount)
-        if success:
-            await update.message.reply_text(
-                f"*Amount updated!*\n\nEntry `#{eid}` → ${new_amount:.2f}\nSynced to Google Sheets",
-                parse_mode="Markdown"
-            )
-        else:
-            await update.message.reply_text(
-                f"Failed to update entry `#{eid}`.", parse_mode="Markdown"
-            )
+        msg = (f"*Amount updated!*\nEntry `#{eid}` → ${new_amount:.2f}\nSynced to Google Sheets"
+               if success else f"Failed to update entry `#{eid}`.")
 
     elif field == "note":
         new_note = "" if text == "-" else text
         success = db.update_expense(eid, note=new_note)
-        if success:
-            await update.message.reply_text(
-                f"*Note updated!*\n\nEntry `#{eid}` → {new_note or '—'}\nSynced to Google Sheets",
-                parse_mode="Markdown"
-            )
-        else:
-            await update.message.reply_text(
-                f"Failed to update entry `#{eid}`.", parse_mode="Markdown"
-            )
+        msg = (f"*Note updated!*\nEntry `#{eid}` → {new_note or '—'}\nSynced to Google Sheets"
+               if success else f"Failed to update entry `#{eid}`.")
 
     elif field == "date":
         try:
             new_dt = datetime.strptime(text, "%d-%m-%Y")
             original_ts = context.user_data.get("editing_ts", "")
             try:
-                original_dt = datetime.strptime(original_ts, "%Y-%m-%d %H:%M")
-                new_ts = new_dt.replace(
-                    hour=original_dt.hour,
-                    minute=original_dt.minute
-                ).strftime("%Y-%m-%d %H:%M:%S")
+                orig = datetime.strptime(original_ts, "%Y-%m-%d %H:%M")
+                new_ts = new_dt.replace(hour=orig.hour, minute=orig.minute).strftime("%Y-%m-%d %H:%M:%S")
             except Exception:
                 new_ts = new_dt.strftime("%Y-%m-%d %H:%M:%S")
         except ValueError:
-            await update.message.reply_text(
-                "Please use format `DD-MM-YYYY` (e.g. `14-03-2026`)",
-                parse_mode="Markdown"
-            )
+            await update.message.reply_text("Use format `DD-MM-YYYY`", parse_mode="Markdown")
             return AWAITING_EDIT_TEXT
-
         success = db.update_expense(eid, created_at=new_ts)
-        if success:
-            await update.message.reply_text(
-                f"*Date updated!*\n\nEntry `#{eid}` → {new_dt.strftime('%d %b %Y')}\nSynced to Google Sheets",
-                parse_mode="Markdown"
-            )
-        else:
-            await update.message.reply_text(
-                f"Failed to update entry `#{eid}`.", parse_mode="Markdown"
-            )
+        msg = (f"*Date updated!*\nEntry `#{eid}` → {new_dt.strftime('%d %b %Y')}\nSynced to Google Sheets"
+               if success else f"Failed to update entry `#{eid}`.")
+    else:
+        return ConversationHandler.END
 
-    context.user_data.pop("editing_field", None)
-    context.user_data.pop("editing_id", None)
+    context.user_data.clear()
+    await update.message.reply_text(msg, parse_mode="Markdown")
     return ConversationHandler.END
 
 
 async def summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not check_user(update):
         return
-
     now = datetime.now(SGT)
     data = db.monthly_summary(now.year, now.month)
     total = sum(v for _, v in data)
-
     if not data:
-        await update.message.reply_text(
-            f"No expenses logged for {now.strftime('%B %Y')} yet.\n\n"
-            "If you expected data, check that Google Sheets is connected.",
-            parse_mode="Markdown"
-        )
+        await update.message.reply_text(f"No expenses logged for {now.strftime('%B %Y')} yet.", parse_mode="Markdown")
         return
-
     lines = [f"*{now.strftime('%B %Y')} Summary*\n"]
     for category, amount in sorted(data, key=lambda x: x[1], reverse=True):
         pct = (amount / total * 100) if total else 0
         bar = "█" * int(pct / 10) + "░" * (10 - int(pct / 10))
         lines.append(f"{category}\n`{bar}` {pct:.0f}%  *${amount:.2f}*\n")
-
     lines.append(f"\n*Total: ${total:.2f}*")
-    top = data[0][0] if data else "—"
-    lines.append(f"Biggest category: {top}")
+    lines.append(f"Biggest category: {data[0][0]}")
     lines.append(f"\nSummary written to Google Sheets tab: *Summary {now.strftime('%b %Y')}*")
     db._sheets.write_summary(now.year, now.month, data, total)
-
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
 async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not check_user(update):
         return
-
     n = 10
     if context.args:
         try:
             n = int(context.args[0])
         except ValueError:
             pass
-
     expenses = db.get_recent(n)
     if not expenses:
         await update.message.reply_text(
-            "No expenses found.\n\n"
-            "If you expected data, check that Google Sheets is connected.\n"
-            "Try adding an entry to verify whether logging works.",
-            parse_mode="Markdown"
-        )
+            "No expenses found. Google Sheets may not be connected.", parse_mode="Markdown")
         return
-
     lines = [f"*Last {len(expenses)} expenses:*\n"]
-    for row in expenses:
-        eid, cat, amount, note, ts = row
-        try:
-            date_str = datetime.strptime(ts, "%Y-%m-%d %H:%M").strftime("%d %b %H:%M")
-        except Exception:
-            date_str = ts[:16]
-        lines.append(f"`#{eid}` {cat} — *${amount:.2f}* {note or ''}\n_{date_str}_\n")
-
+    for eid, cat, amount, note, ts in expenses:
+        lines.append(f"`#{eid}` {cat} — *${amount:.2f}* {note or ''}\n_{_fmt_ts(ts)}_\n")
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
 async def delete_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not check_user(update):
         return
-
     if not context.args:
         await update.message.reply_text("Usage: `/delete <id>`", parse_mode="Markdown")
         return
-
     try:
         eid = int(context.args[0])
     except ValueError:
         await update.message.reply_text("ID must be a number.", parse_mode="Markdown")
         return
-
     success = db.delete_expense(eid)
     if success:
-        await update.message.reply_text(
-            f"Expense `#{eid}` deleted.\nSynced to Google Sheets",
-            parse_mode="Markdown"
-        )
+        await update.message.reply_text(f"Expense `#{eid}` deleted.\nSynced to Google Sheets ✓", parse_mode="Markdown")
     else:
-        await update.message.reply_text(
-            f"Expense `#{eid}` not found.",
-            parse_mode="Markdown"
-        )
+        await update.message.reply_text(f"Expense `#{eid}` not found. Use `/history` to check IDs.", parse_mode="Markdown")
 
 
 def main():
     application = Application.builder().token(BOT_TOKEN).build()
 
-    cat_conv_handler = ConversationHandler(
+    cat_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(category_selected, pattern=r"^cat:")],
         states={
-            AWAITING_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_amount)]
+            AWAITING_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_amount)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
-    edit_conv_handler = ConversationHandler(
+    edit_conv = ConversationHandler(
         entry_points=[CommandHandler("edit", edit)],
         states={
-            AWAITING_EDIT_TEXT: [
+            CHOOSING_ENTRY: [
                 CallbackQueryHandler(edit_pick, pattern=r"^editpick:"),
+            ],
+            CHOOSING_FIELD: [
                 CallbackQueryHandler(edit_field, pattern=r"^editfield:"),
+            ],
+            AWAITING_EDIT_TEXT: [
                 CallbackQueryHandler(edit_category_selected, pattern=r"^editcat:"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_text),
-            ]
+            ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
@@ -528,8 +505,8 @@ def main():
     application.add_handler(CommandHandler("history", history))
     application.add_handler(CommandHandler("delete", delete_expense))
     application.add_handler(CommandHandler("cancel", cancel))
-    application.add_handler(cat_conv_handler)
-    application.add_handler(edit_conv_handler)
+    application.add_handler(cat_conv)
+    application.add_handler(edit_conv)
 
     application.run_webhook(
         listen="0.0.0.0",
