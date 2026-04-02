@@ -38,11 +38,18 @@ class SheetsClient:
             creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=scopes)
             self._client = gspread.authorize(creds)
             self._spreadsheet = self._client.open_by_key(SPREADSHEET_ID)
-            logger.info("✅ Google Sheets connected.")
+            logger.info("Google Sheets connected.")
         except FileNotFoundError:
-            logger.warning("⚠️  credentials.json not found — Sheets disabled.")
+            logger.warning("credentials.json not found — Sheets disabled.")
         except Exception as e:
-            logger.warning(f"⚠️  Sheets connection failed: {e}")
+            logger.warning(f"Sheets connection failed: {e}")
+
+    def _reconnect_if_needed(self) -> bool:
+        if self._spreadsheet:
+            return True
+        logger.info("Attempting to reconnect to Google Sheets…")
+        self._try_connect()
+        return self._spreadsheet is not None
 
     def _expense_tab_name(self, year: int, month: int) -> str:
         return f"Expenses {month_abbr[month]} {year}"
@@ -56,6 +63,7 @@ class SheetsClient:
         try:
             return self._spreadsheet.worksheet(tab_name)
         except gspread.WorksheetNotFound:
+            logger.info(f"Creating new tab: {tab_name}")
             sheet = self._spreadsheet.add_worksheet(tab_name, rows=1000, cols=6)
             sheet.update("A1:F1", [["ID", "Date", "Category", "Amount", "Note", "Month"]])
             sheet.format("A1:F1", {
@@ -69,23 +77,24 @@ class SheetsClient:
         try:
             return [s for s in self._spreadsheet.worksheets()
                     if s.title.startswith("Expenses ")]
-        except Exception:
+        except Exception as e:
+            logger.error(f"_all_expense_sheets failed: {e}")
             return []
 
-    def _next_id(self) -> int:
-        """Return the next globally unique ID across all expense tabs."""
-        max_id = 0
-        for sheet in self._all_expense_sheets():
-            try:
-                col = sheet.col_values(1)
-                for val in col[1:]:
-                    try:
-                        max_id = max(max_id, int(str(val).strip()))
-                    except ValueError:
-                        pass
-            except Exception:
-                pass
-        return max_id + 1
+
+    def _next_id_for_tab(self, sheet) -> int:
+        try:
+            col = sheet.col_values(1)
+            max_id = 0
+            for val in col[1:]:
+                try:
+                    max_id = max(max_id, int(str(val).strip()))
+                except ValueError:
+                    pass
+            return max_id + 1
+        except Exception as e:
+            logger.error(f"_next_id_for_tab failed: {e}")
+            return 1
 
     def _find_row(self, sheet, expense_id: int):
         """Return 1-indexed row number for expense_id in column A, or None."""
@@ -117,23 +126,23 @@ class SheetsClient:
             all_values = sheet.get_all_values()
             if len(all_values) <= 2:
                 return
+            header = all_values[0]
             data_rows = all_values[1:]
             data_rows.sort(key=lambda r: r[1] if len(r) > 1 else "")
-            last_row = len(all_values)
-            sheet.delete_rows(2, last_row)
-            if data_rows:
-                sheet.append_rows(data_rows, value_input_option="USER_ENTERED")
+
+            update_range = f"A1:{chr(64 + len(header))}{len(all_values)}"
+            sheet.update(update_range, [header] + data_rows)
         except Exception as e:
-            logger.error(f"Sort failed: {e}")
+            logger.error(f"_sort_tab failed (non-fatal): {e}")
 
     def add_expense(self, category: str, amount: float, note: str = "") -> int:
-        """Add a new expense. Returns the new ID."""
-        if not self._spreadsheet:
+        if not self._reconnect_if_needed():
+            logger.error("add_expense: not connected to Sheets.")
             return -1
         try:
             now = datetime.now(SGT)
-            expense_id = self._next_id()
             sheet = self._get_or_create_expense_tab(now.year, now.month)
+            expense_id = self._next_id_for_tab(sheet)
             row = [
                 expense_id,
                 now.strftime("%Y-%m-%d %H:%M"),
@@ -144,7 +153,7 @@ class SheetsClient:
             ]
             sheet.append_row(row, value_input_option="USER_ENTERED")
             self._sort_tab(sheet)
-            logger.info(f"Added expense #{expense_id}.")
+            logger.info(f"Added expense #{expense_id} to '{sheet.title}'.")
             return expense_id
         except Exception as e:
             logger.error(f"add_expense failed: {e}")
@@ -152,7 +161,7 @@ class SheetsClient:
 
     def delete_expense(self, expense_id: int) -> bool:
         """Delete a row by ID. Returns True if found and deleted."""
-        if not self._spreadsheet:
+        if not self._reconnect_if_needed():
             return False
         try:
             sheet, row_num = self._find_row_anywhere(expense_id)
@@ -168,15 +177,12 @@ class SheetsClient:
     def update_expense(
         self,
         expense_id: int,
-        category:   str = None,
-        amount:     float = None,
-        note:       str   = None,
-        created_at: str   = None,
+        category: str = None,
+        amount: float = None,
+        note: str = None,
+        created_at: str = None,
     ) -> bool:
-        """Update one or more fields on an existing expense.
-        If created_at changes the month, the row is moved to the correct tab.
-        """
-        if not self._spreadsheet:
+        if not self._reconnect_if_needed():
             return False
         try:
             sheet, row_num = self._find_row_anywhere(expense_id)
@@ -192,7 +198,7 @@ class SheetsClient:
                     created_at = dt.strftime("%Y-%m-%d %H:%M")
                 except ValueError:
                     pass
-                new_dt  = datetime.strptime(created_at, "%Y-%m-%d %H:%M")
+                new_dt = datetime.strptime(created_at, "%Y-%m-%d %H:%M")
                 new_tab = self._expense_tab_name(new_dt.year, new_dt.month)
 
                 if new_tab != sheet.title:
@@ -233,7 +239,7 @@ class SheetsClient:
         """Return last n expenses across all tabs, sorted by date descending.
         Returns list of (id, category, amount, note, created_at).
         """
-        if not self._spreadsheet:
+        if not self._reconnect_if_needed():
             return []
         try:
             all_rows = []
@@ -258,14 +264,14 @@ class SheetsClient:
 
     def monthly_summary(self, year: int, month: int):
         """Return [(category, total)] for the given month, sorted by total desc."""
-        if not self._spreadsheet:
+        if not self._reconnect_if_needed():
             return []
         try:
+            import gspread
             tab_name = self._expense_tab_name(year, month)
             try:
-                import gspread
                 sheet = self._spreadsheet.worksheet(tab_name)
-            except Exception:
+            except gspread.WorksheetNotFound:
                 return []
 
             totals = {}
@@ -285,7 +291,7 @@ class SheetsClient:
 
     def write_summary(self, year: int, month: int, data: list, total: float):
         """Write monthly summary to a tab named e.g. 'Summary Mar 2026'."""
-        if not self._spreadsheet:
+        if not self._reconnect_if_needed():
             return
         try:
             import gspread
@@ -309,9 +315,7 @@ class SheetsClient:
             rows.append(["", "", ""])
             rows.append(["TOTAL", round(total, 2), "100%"])
 
-            if rows:
-                summary_sheet.update(f"A2:C{len(rows) + 1}", rows)
-
+            summary_sheet.update(f"A2:C{len(rows) + 1}", rows)
             logger.info(f"Written summary tab '{tab_name}'.")
         except Exception as e:
             logger.error(f"write_summary failed: {e}")
