@@ -65,7 +65,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/edit` — Edit a recent entry interactively\n"
         "`/edit <id> <field> <value>` — Edit inline\n"
         "  Fields: `Date` · `Amount` · `Note` · `Category`\n"
-        "`/summary` — This month's breakdown\n"
+        "`/summary [month]` — Monthly breakdown (default: this month)\n"
+        "  e.g. `/summary Mar` · `/summary 3` · `/summary 03-2026`\n"
         "`/history [n]` — Last n expenses (default 10)\n"
         "`/delete <id>` — Remove an entry by ID\n"
         "`/help` — Show this message\n\n"
@@ -413,21 +414,76 @@ async def handle_edit_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not check_user(update):
         return
-    now = datetime.now(SGT)
-    data = db.monthly_summary(now.year, now.month)
+
+    now  = datetime.now(SGT)
+    year = now.year
+    month = now.month
+
+    if context.args:
+        arg = context.args[0].strip()
+        parsed = False
+
+        if "-" in arg and len(arg) >= 6:
+            try:
+                parts = arg.split("-")
+                month = int(parts[0])
+                year  = int(parts[1])
+                if not (1 <= month <= 12):
+                    raise ValueError
+                parsed = True
+            except (ValueError, IndexError):
+                pass
+
+        if not parsed:
+            try:
+                month = int(arg)
+                if not (1 <= month <= 12):
+                    raise ValueError
+                parsed = True
+            except ValueError:
+                pass
+
+        if not parsed:
+            month_names_full  = [m.lower() for m in ["", "January","February","March","April",
+                                  "May","June","July","August","September",
+                                  "October","November","December"]]
+            month_names_abbr  = [m.lower() for m in ["", "Jan","Feb","Mar","Apr",
+                                  "May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]]
+            arg_lower = arg.lower()
+            for i in range(1, 13):
+                if arg_lower == month_names_full[i] or arg_lower == month_names_abbr[i]:
+                    month = i
+                    parsed = True
+                    break
+
+        if not parsed:
+            await update.message.reply_text(
+                "Could not parse month.\n\n"
+                "Usage: `/summary` · `/summary Mar` · `/summary 3` · `/summary 03-2026`",
+                parse_mode="Markdown"
+            )
+            return
+
+    from calendar import month_abbr as _mabbr
+    label = f"{_mabbr[month]} {year}"
+    data  = db.monthly_summary(year, month)
     total = sum(v for _, v in data)
     if not data:
-        await update.message.reply_text(f"No expenses logged for {now.strftime('%B %Y')} yet.", parse_mode="Markdown")
+        await update.message.reply_text(
+            f"⚠️ No expenses logged for *{label}*.",
+            parse_mode="Markdown"
+        )
         return
-    lines = [f"*{now.strftime('%B %Y')} Summary*\n"]
+
+    lines = [f"*{label} Summary*\n"]
     for category, amount in sorted(data, key=lambda x: x[1], reverse=True):
         pct = (amount / total * 100) if total else 0
         bar = "█" * int(pct / 10) + "░" * (10 - int(pct / 10))
         lines.append(f"{category}\n`{bar}` {pct:.0f}%  *${amount:.2f}*\n")
     lines.append(f"\n*Total: ${total:.2f}*")
     lines.append(f"Biggest category: {data[0][0]}")
-    lines.append(f"\nSummary written to Google Sheets tab: *Summary {now.strftime('%b %Y')}*")
-    db._sheets.write_summary(now.year, now.month, data, total)
+    lines.append(f"\nSummary written to Google Sheets tab: *Summary {label}*")
+    db._sheets.write_summary(year, month, data, total)
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
