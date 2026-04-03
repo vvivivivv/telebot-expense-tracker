@@ -527,15 +527,29 @@ async def delete_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     application = Application.builder().token(BOT_TOKEN).build()
-
+ 
+    _all_cmd_fallbacks = [
+        CommandHandler("cancel", cancel),
+        CommandHandler("start", start),
+        CommandHandler("help", help_cmd),
+        CommandHandler("add", add_expense),
+        CommandHandler("categories", show_categories),
+        CommandHandler("summary", summary),
+        CommandHandler("history", history),
+        CommandHandler("delete", delete_expense),
+        CommandHandler("edit", edit),
+    ]
+ 
     cat_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(category_selected, pattern=r"^cat:")],
         states={
             AWAITING_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_amount)],
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=_all_cmd_fallbacks,
     )
-
+ 
+    # allow_reentry=True: sending /edit again while mid-flow resets the conversation instead of being silently swallowed.
+    # Full command fallbacks: /add, /history etc. always escape the flow too.
     edit_conv = ConversationHandler(
         entry_points=[CommandHandler("edit", edit)],
         states={
@@ -550,9 +564,10 @@ def main():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_text),
             ],
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=_all_cmd_fallbacks,
+        allow_reentry=True,
     )
-
+ 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_cmd))
     application.add_handler(CommandHandler("add", add_expense))
@@ -563,7 +578,7 @@ def main():
     application.add_handler(CommandHandler("cancel", cancel))
     application.add_handler(cat_conv)
     application.add_handler(edit_conv)
-
+ 
     application.run_webhook(
         listen="0.0.0.0",
         port=PORT,
