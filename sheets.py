@@ -45,6 +45,7 @@ class SheetsClient:
             logger.warning(f"Sheets connection failed: {e}")
 
     def _reconnect_if_needed(self) -> bool:
+        """Re-authenticate if the session has expired. Returns True if connected."""
         if self._spreadsheet:
             return True
         logger.info("Attempting to reconnect to Google Sheets…")
@@ -73,16 +74,34 @@ class SheetsClient:
             return sheet
 
     def _all_expense_sheets(self):
-        """Return all Expenses * worksheets."""
+        """Return all Expenses * worksheets sorted newest month first.
+        Ensures _find_row_anywhere resolves duplicate
+        per-month IDs to the most recent tab.
+        """
         try:
-            return [s for s in self._spreadsheet.worksheets()
-                    if s.title.startswith("Expenses ")]
+            sheets = [s for s in self._spreadsheet.worksheets()
+                      if s.title.startswith("Expenses ")]
+
+            def _tab_sort_key(s):
+                try:
+                    parts = s.title.split()
+                    month_num = list(month_abbr).index(parts[1])
+                    year_num = int(parts[2])
+                    return (year_num, month_num)
+                except Exception:
+                    return (0, 0)
+
+            sheets.sort(key=_tab_sort_key, reverse=True)
+            return sheets
         except Exception as e:
             logger.error(f"_all_expense_sheets failed: {e}")
             return []
 
-
     def _next_id_for_tab(self, sheet) -> int:
+        """
+        Return the next ID within a single tab (1-based, increments from max).
+        Resets to 1 for each new monthly tab.
+        """
         try:
             col = sheet.col_values(1)
             max_id = 0
@@ -97,7 +116,6 @@ class SheetsClient:
             return 1
 
     def _find_row(self, sheet, expense_id: int):
-        """Return 1-indexed row number for expense_id in column A, or None."""
         try:
             for i, row in enumerate(sheet.get_all_values()):
                 if row and str(row[0]).strip() == str(expense_id):
@@ -107,10 +125,13 @@ class SheetsClient:
         return None
 
     def _find_row_anywhere(self, expense_id: int):
-        """Search all Expenses tabs. Returns (sheet, row_num) or (None, None)."""
+        """Search all Expenses tabs newest-first. Returns (sheet, row_num) or (None, None).
+        Ensures edits/deletes affect the most recent tab if duplicate IDs exist.
+        """
         for sheet in self._all_expense_sheets():
             row_num = self._find_row(sheet, expense_id)
             if row_num:
+                logger.debug(f"Found #{expense_id} in '{sheet.title}' row {row_num}.")
                 return sheet, row_num
         return None, None
 
@@ -160,7 +181,6 @@ class SheetsClient:
             return -1
 
     def delete_expense(self, expense_id: int) -> bool:
-        """Delete a row by ID. Returns True if found and deleted."""
         if not self._reconnect_if_needed():
             return False
         try:
@@ -209,7 +229,8 @@ class SheetsClient:
                         existing[0] if existing else expense_id,
                         created_at,
                         category if category is not None else (existing[2] if len(existing) > 2 else ""),
-                        round(float(amount), 2) if amount is not None else (existing[3] if len(existing) > 3 else ""),
+                        round(float(amount), 2) if amount is not None
+                            else (float(existing[3]) if len(existing) > 3 else 0),
                         note if note is not None else (existing[4] if len(existing) > 4 else ""),
                         new_dt.strftime("%B %Y"),
                     ]
